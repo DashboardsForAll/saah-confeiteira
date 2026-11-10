@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Saah Confeiteira</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- O mesmo conteúdo está em artifact.html (versão publicada no claude.ai, sem o esqueleto do documento). -->
+  <header class="topbar">
+    <a class="brand" href="#inicio">Saah</a>
+    <nav id="nav" class="nav"></nav>
+  </header>
+  <div id="hero"></div>
+  <main id="app" class="container"></main>
+  <footer class="container footer">
+    <span id="sync-status"></span>
+    <span id="auth-slot"></span>
+    <button class="link" data-action="export">Exportar backup</button>
+    <button class="link" data-action="import">Importar backup</button>
+    <button class="link" data-action="reset">Restaurar dados de exemplo</button>
+  </footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <datalist id="dl-medidas">
+    <option value="unidade"><option value="xícara"><option value="colher sopa"><option value="colher chá">
+    <option value="ml"><option value="litros"><option value="g"><option value="kg"><option value="caixa"><option value="lata"><option value="pacote">
+  </datalist>
+  <datalist id="dl-ings"></datalist>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

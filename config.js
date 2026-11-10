@@ -5,6 +5,6 @@
 //            editar é definido pelas regras do banco em supabase/setup.sql)
 // Com os campos vazios, o site salva os dados só no navegador de cada pessoa.
 window.SAAH_SUPABASE = {
-  url: '',
-  anonKey: '',
+  url: 'https://glqiuiwznwmqkogiwctz.supabase.co',
+  anonKey: 'sb_publishable_sRG9Tv8u9fI1SnHATaCa_w_JozsGBIC',
 };

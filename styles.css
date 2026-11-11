@@ -280,6 +280,11 @@ tr.zero td { background: var(--danger-bg); }
 .mes-filter { min-width: 190px; }
 
 .modal-links { display: flex; flex-wrap: wrap; gap: 16px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.entrada-check { font-size: 13px; margin-right: 6px; white-space: nowrap; }
+.entrada-check input { width: 15px; height: 15px; }
+input[readonly].input { background: var(--surface-2); color: var(--muted); }
+.readonly .entrada-check { display: none !important; }
 
 /* Cliente: só exclui vendas; não restaura nem importa dados */
 .papel-cliente [data-action$="-del"]:not([data-action="sale-del"]),

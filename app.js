@@ -31,6 +31,17 @@ const fmtNum = n => (isFinite(n) ? n.toLocaleString('pt-BR', { maximumFractionDi
 const brl = n => (isFinite(n) ? n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—');
 const pct = n => (isFinite(n) ? n.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—');
 const fmtDate = iso => (iso ? iso.split('-').reverse().join('/') : '—');
+/* Encomendas: ingredientes baixados no dia anterior à entrega */
+function diaAnterior(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return isoDate(new Date(y, m - 1, d - 1));
+}
+const round2 = n => Math.round(n * 100) / 100;
+/* Encomenda só vale (baixa ingredientes, conta como confirmada) depois da entrada paga */
+const encomendaValidada = v => v.tipo !== 'encomenda' || !!v.entradaPaga || v.status === 'entregue';
+/* Quanto ainda falta receber de uma venda pendente */
+const aReceber = v => (v.status === 'entregue' ? 0 : num(v.valor) - (v.tipo === 'encomenda' && v.entradaPaga ? num(v.entrada) || 0 : 0));
 const inputNum = n => (n == null || n === '' || !isFinite(n) ? '' : String(n).replace('.', ','));
 function fmtLong(iso) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -436,8 +447,8 @@ function consumptionEvents(opts = {}) {
     ev.push({ tipo: 'consumo', data: p.data, seq: p.seq || 0, ord: 1, ref: 'p:' + p.id, origem: `Produção · ${p.snapshot.nome}`, itens: p.snapshot.itens, fator: factorOf(p.snapshot, p.peso, p.quantidade) });
   });
   db.vendas.forEach(v => {
-    if (v.tipo !== 'encomenda' || v.status !== 'entregue' || !v.snapshot) return;
-    ev.push({ tipo: 'consumo', data: v.dataBaixa || v.dataEntrega, seq: v.seqBaixa || 0, ord: 1, ref: 'v:' + v.id, origem: `Encomenda · ${v.snapshot.nome}${v.cliente ? ' (' + v.cliente + ')' : ''}`, itens: v.snapshot.itens, fator: factorOf(v.snapshot, v.peso, v.qtd) });
+    if (v.tipo !== 'encomenda' || !encomendaValidada(v) || !v.snapshot) return;
+    ev.push({ tipo: 'consumo', data: v.dataBaixa || diaAnterior(v.dataEntrega), seq: v.seqBaixa || 0, ord: 1, ref: 'v:' + v.id, origem: `Encomenda · ${v.snapshot.nome}${v.cliente ? ' (' + v.cliente + ')' : ''}`, itens: v.snapshot.itens, fator: factorOf(v.snapshot, v.peso, v.qtd) });
   });
   return ev;
 }
@@ -649,6 +660,7 @@ function viewInicio(L) {
 
 function orderStatus(v) {
   if (v.status === 'entregue') return ['Entregue', 'ok'];
+  if (!encomendaValidada(v)) return ['Aguardando entrada', 'danger'];
   if (v.dataEntrega < hoje()) return ['Atrasada', 'danger'];
   return ['Próxima', 'gold'];
 }
@@ -866,9 +878,11 @@ function saleFormHtml(L) {
       ${field('Quantidade (bolos)', inp('saleForm.qtd', f.qtd, 'inputmode="decimal"'))}
       ${field('Valor da venda (R$)', inp('saleForm.valor', f.valor, 'inputmode="decimal" placeholder="Ex.: 80,00"'))}
       ${field('Data da entrega', inp('saleForm.dataEntrega', f.dataEntrega, 'type="date"'))}
-      ${field('Baixa dos ingredientes em', inp('saleForm.dataBaixa', f.dataBaixa, 'type="date" id="sale-baixa"'))}
+      ${field('Valor de entrada (R$) · 50%', inp('saleForm.entrada', f.entrada, 'inputmode="decimal" id="sale-entrada" placeholder="Metade do valor"'))}
+      ${field('Valor na retirada (R$) · 50%', inp('saleForm.retirada', f.retirada, 'inputmode="decimal" id="sale-retirada" placeholder="Metade do valor"'))}
+      ${field('Baixa dos ingredientes em', `<input class="input" type="date" id="sale-baixa" value="${esc(f.dataBaixa)}" readonly tabindex="-1" title="Sempre um dia antes da entrega">`)}
     </div>
-    <p class="note">Encomenda antecipada: os ingredientes são baixados do estoque na data da baixa (por padrão, a data da entrega) quando você confirmar a entrega.</p>`
+    <p class="note">Encomenda antecipada: os ingredientes são baixados do estoque sempre um dia antes da entrega. A encomenda só fica confirmada quando você marcar <b>Entrada paga</b> na lista de vendas.</p>`
     : `
     <div class="form-grid">
       ${field('Produto em estoque', sel('saleForm.produtoId', f.produtoId, avail.length
@@ -904,8 +918,8 @@ function viewVendas(L) {
     `<div class="head-actions">${filtroMes()}${open ? '' : `<button class="btn primary" data-action="sale-new">${I.plus} Incluir venda</button>`}</div>`) +
     (db.vendas.length ? `<div class="stats">
       <div class="stat ok"><span>Vendido (entregue)</span><b>${brl(sum(entregues, v => num(v.valor)))}</b></div>
-      <div class="stat"><span>A receber (pendente)</span><b>${brl(sum(pend, v => num(v.valor)))}</b></div>
-      <div class="stat"><span>Encomendas pendentes</span><b>${pend.filter(v => v.tipo === 'encomenda').length}</b></div>
+      <div class="stat"><span>A receber (pendente)</span><b>${brl(sum(pend, aReceber))}</b></div>
+      <div class="stat"><span>Encomendas aguardando entrada</span><b>${pend.filter(v => !encomendaValidada(v)).length}</b></div>
       <div class="stat"><span>Pronta entrega pendentes</span><b>${pend.filter(v => v.tipo === 'estoque').length}</b></div></div>` : '') +
     (open ? saleFormHtml(L) : '') +
     (vs.length ? `<section class="card ${open ? 'mt' : ''}"><div class="table-wrap"><table>
@@ -913,7 +927,8 @@ function viewVendas(L) {
       <tbody>${vs.map(v => {
         const [st, cls] = orderStatus(v);
         const baixa = v.tipo === 'encomenda'
-          ? (v.status === 'entregue' ? `Ingredientes em ${fmtDate(v.dataBaixa)}` : `<input class="input" type="date" style="width:150px" data-field="dataBaixa" data-id="${v.id}" value="${esc(v.dataBaixa)}" title="Data da baixa dos ingredientes">`)
+          ? `${encomendaValidada(v) ? 'Ingredientes em' : 'Ingredientes previstos para'} ${fmtDate(v.dataBaixa || diaAnterior(v.dataEntrega))}
+             <span class="sub">Entrada ${brl(num(v.entrada ?? num(v.valor) / 2))}${v.entradaPaga ? ' (paga)' : ''} · Retirada ${brl(num(v.retirada ?? num(v.valor) / 2))}</span>`
           : (v.status === 'entregue' ? `Produto em ${fmtDate(v.entregueEm)}` : '<span class="muted small">Reservado</span>');
         return `<tr>
           <td>${fmtDate(v.dataEntrega)}</td><td>${esc(v.cliente || '—')}</td><td>${esc(v.nome)}</td>
@@ -925,7 +940,8 @@ function viewVendas(L) {
           <td class="small">${baixa}</td>
           <td style="white-space:nowrap">${v.status === 'entregue'
             ? `<button class="icon-btn" data-action="sale-undo" data-id="${v.id}" title="Desfazer entrega">${I.undo}</button>`
-            : `<button class="btn ok sm" data-action="sale-deliver" data-id="${v.id}">${I.check} OK entrega</button>
+            : `${v.tipo === 'encomenda' ? `<label class="check small entrada-check" title="Marque quando a cliente pagar a entrada"><input type="checkbox" data-action="entrada-paga" data-id="${v.id}" ${v.entradaPaga ? 'checked' : ''}> Entrada paga</label>` : ''}
+               <button class="btn ok sm" data-action="sale-deliver" data-id="${v.id}" ${v.tipo === 'encomenda' && !v.entradaPaga ? 'disabled title="Marque a entrada paga primeiro"' : ''}>${I.check} OK entrega</button>
                <button class="icon-btn" data-action="sale-edit" data-id="${v.id}" title="Editar venda">${I.edit}</button>`}
             <button class="icon-btn danger" data-action="sale-del" data-id="${v.id}" title="Excluir venda">${I.trash}</button></td></tr>`;
       }).join('')}</tbody></table></div></section>`
@@ -1050,7 +1066,7 @@ function viewFinanceiro(L) {
   const ent = vm.filter(v => v.status === 'entregue');
   const fat = sum(ent, v => num(v.valor));
   const cpv = sum(ent, v => saleCost(v, L));
-  const rec = sum(vm.filter(v => v.status !== 'entregue'), v => num(v.valor));
+  const rec = sum(vm.filter(v => v.status !== 'entregue'), aReceber);
   return pageHead('Controle Financeiro', 'Valor de venda, custo e margem de lucro de cada produto.', `<div class="head-actions">${filtroMes()}</div>`) +
     `<div class="stats">
       <div class="stat ok"><span>Faturamento (entregues)</span><b>${brl(fat)}</b></div>
@@ -1215,10 +1231,17 @@ function syncDerived(path) {
   const f = ui.saleForm;
   if (f && path.startsWith('saleForm.')) {
     if (path === 'saleForm.valor') f.valorManual = true;
-    if (path === 'saleForm.dataBaixa') f.baixaManual = true;
-    if (path === 'saleForm.dataEntrega' && !f.baixaManual) {
-      f.dataBaixa = f.dataEntrega; const el = document.getElementById('sale-baixa'); if (el) el.value = f.dataBaixa;
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    if (path === 'saleForm.dataEntrega') { f.dataBaixa = diaAnterior(f.dataEntrega); setEl('sale-baixa', f.dataBaixa); }
+    // entrada e retirada: 50% cada; ao mudar um, o outro completa o valor da venda
+    const total = num(f.valor);
+    if (path === 'saleForm.valor' || path === 'saleForm.encomenda') {
+      if (total > 0) { f.entrada = inputNum(round2(total / 2)); f.retirada = inputNum(round2(total - round2(total / 2))); }
+      else { f.entrada = ''; f.retirada = ''; }
+      setEl('sale-entrada', f.entrada); setEl('sale-retirada', f.retirada);
     }
+    if (path === 'saleForm.entrada' && total > 0 && isFinite(num(f.entrada))) { f.retirada = inputNum(round2(total - num(f.entrada))); setEl('sale-retirada', f.retirada); }
+    if (path === 'saleForm.retirada' && total > 0 && isFinite(num(f.retirada))) { f.entrada = inputNum(round2(total - num(f.retirada))); setEl('sale-entrada', f.entrada); }
     if (path === 'saleForm.produtoId') { f.qtd = '1'; f.valorManual = false; }
     if (path === 'saleForm.pagamento' && !bandeirasDe(f.pagamento).includes(f.bandeira)) f.bandeira = '';
     if (path === 'saleForm.receitaId') { const r = recipeById(f.receitaId); if (r && !f.peso) f.peso = inputNum(r.rendimento); }
@@ -1331,7 +1354,7 @@ const ACTIONS = {
   },
 
   /* Vendas */
-  'sale-new': () => { ui.saleForm = { encomenda: false, produtoId: '', receitaId: '', peso: '', qtd: '1', cliente: '', valor: '', dataEntrega: hoje(), dataBaixa: hoje(), plataforma: 'Presencial', pagamento: 'Pix', bandeira: '' }; render(); },
+  'sale-new': () => { ui.saleForm = { encomenda: false, produtoId: '', receitaId: '', peso: '', qtd: '1', cliente: '', valor: '', entrada: '', retirada: '', dataEntrega: hoje(), dataBaixa: diaAnterior(hoje()), plataforma: 'Presencial', pagamento: 'Pix', bandeira: '' }; render(); },
   'sale-cancel': () => { ui.saleForm = null; render(); },
   'sale-save': () => {
     const f = ui.saleForm;
@@ -1355,7 +1378,13 @@ const ACTIONS = {
       const peso = num(f.peso);
       if (!(peso > 0)) return fail('Informe o peso do bolo.');
       const snap = old && old.tipo === 'encomenda' && old.receitaId === rec.id && old.snapshot ? old.snapshot : snapshotOf(rec);
-      nova = { ...base, tipo: 'encomenda', receitaId: rec.id, nome: rec.nome, snapshot: snap, peso, dataBaixa: f.dataBaixa || f.dataEntrega };
+      const entrada = num(f.entrada), retirada = num(f.retirada);
+      if (!(entrada >= 0) || !(retirada >= 0)) return fail('Informe o valor de entrada e o valor na retirada.');
+      if (Math.abs(entrada + retirada - valor) > 0.009) return fail(`Entrada + retirada (${brl(entrada + retirada)}) precisa ser igual ao valor da venda (${brl(valor)}).`);
+      const manter = old && old.tipo === 'encomenda';
+      nova = { ...base, tipo: 'encomenda', receitaId: rec.id, nome: rec.nome, snapshot: snap, peso, entrada, retirada,
+        dataBaixa: diaAnterior(f.dataEntrega),
+        entradaPaga: manter ? !!old.entradaPaga : false, entradaPagaEm: manter ? old.entradaPagaEm || null : null, seqBaixa: manter ? old.seqBaixa || 0 : 0 };
     } else {
       const p = productById(f.produtoId);
       if (!p) return fail('Selecione um produto em estoque.');
@@ -1365,7 +1394,8 @@ const ACTIONS = {
       nova = { ...base, tipo: 'estoque', produtoId: p.id, nome: i.nome, unidade: i.unidade };
     }
     if (old) db.vendas = db.vendas.map(v => (v.id === old.id ? nova : v)); else db.vendas.push(nova);
-    ui.saleForm = null; commit(old ? 'Venda atualizada.' : 'Venda incluída.');
+    ui.saleForm = null;
+    commit(old ? 'Venda atualizada.' : nova.tipo === 'encomenda' ? 'Encomenda salva. Ela fica confirmada quando você marcar "Entrada paga".' : 'Venda incluída.');
   },
   'sale-edit': d => {
     const v = db.vendas.find(x => x.id === d.id);
@@ -1374,7 +1404,8 @@ const ACTIONS = {
     ui.saleForm = {
       id: v.id, encomenda: v.tipo === 'encomenda', produtoId: v.produtoId || '', receitaId: v.receitaId || '',
       peso: inputNum(v.peso), qtd: inputNum(v.qtd), cliente: v.cliente || '', valor: inputNum(v.valor),
-      dataEntrega: v.dataEntrega, dataBaixa: v.dataBaixa || v.dataEntrega,
+      dataEntrega: v.dataEntrega, dataBaixa: diaAnterior(v.dataEntrega),
+      entrada: inputNum(v.entrada ?? round2(num(v.valor) / 2)), retirada: inputNum(v.retirada ?? round2(num(v.valor) - round2(num(v.valor) / 2))),
       plataforma: v.plataforma || 'Presencial', pagamento: v.pagamento || 'Pix', bandeira: v.bandeira || '',
       valorManual: true, baixaManual: true, origProdutoId: v.tipo === 'estoque' ? v.produtoId : null, origQtd: num(v.qtd),
     };
@@ -1385,16 +1416,13 @@ const ACTIONS = {
     if (!v) return;
     let res;
     if (v.tipo === 'encomenda') {
-      const falta = shortages(v.snapshot.itens, factorOf(v.snapshot, v.peso, v.qtd), computeLedger());
+      if (!v.entradaPaga) return fail('Marque "Entrada paga" antes de confirmar a entrega desta encomenda.');
       res = await ask({
         title: `Confirmar a entrega para ${v.cliente}?`,
-        body: `${fmtNum(v.qtd)} ${unidadeLabel('bolo', v.qtd)} de ${esc(v.nome)} (encomenda). Os ingredientes serão baixados do estoque na data abaixo.` +
-          (falta.length ? `<div class="warn-box">Estoque insuficiente de ${falta.map(s => esc(s.nome)).join(', ')}. O saldo ficará negativo.</div>` : ''),
-        extra: field('Baixa dos ingredientes em', `<input class="input" type="date" name="dataBaixa" value="${esc(v.dataBaixa || v.dataEntrega)}" required>`),
+        body: `${fmtNum(v.qtd)} ${unidadeLabel('bolo', v.qtd)} de ${esc(v.nome)} (encomenda).<br>Receber na retirada: <b>${brl(num(v.retirada ?? v.valor))}</b>.<br><span class="muted">Ingredientes baixados em ${fmtDate(v.dataBaixa || diaAnterior(v.dataEntrega))}, um dia antes da entrega.</span>`,
         ok: 'OK, entregue',
       });
       if (!res) return;
-      if (res.dataBaixa) v.dataBaixa = res.dataBaixa;
     } else {
       const p = productById(v.produtoId);
       if (!p) return fail('O produto desta venda não existe mais.');
@@ -1405,8 +1433,30 @@ const ACTIONS = {
       });
       if (!res) return;
     }
-    v.status = 'entregue'; v.entregueEm = hoje(); v.seqBaixa = Date.now();
-    commit(v.tipo === 'encomenda' ? `Entrega confirmada. Ingredientes baixados em ${fmtDate(v.dataBaixa)}.` : 'Entrega confirmada e produto baixado do estoque.');
+    v.status = 'entregue'; v.entregueEm = hoje();
+    if (v.tipo !== 'encomenda') v.seqBaixa = Date.now();
+    commit(v.tipo === 'encomenda' ? 'Entrega confirmada.' : 'Entrega confirmada e produto baixado do estoque.');
+  },
+  'entrada-paga': async d => {
+    const v = db.vendas.find(x => x.id === d.id);
+    if (!v || v.status === 'entregue') return;
+    if (!v.entradaPaga) {
+      const falta = shortages(v.snapshot.itens, factorOf(v.snapshot, v.peso, v.qtd), computeLedger());
+      const res = await ask({
+        title: `Entrada de ${v.cliente} paga?`,
+        body: `Valor de entrada: <b>${brl(num(v.entrada ?? num(v.valor) / 2))}</b>. A encomenda fica confirmada e os ingredientes são baixados do estoque em <b>${fmtDate(v.dataBaixa || diaAnterior(v.dataEntrega))}</b> (um dia antes da entrega).` +
+          (falta.length ? `<div class="warn-box">Estoque insuficiente de ${falta.map(s => esc(s.nome)).join(', ')}. O saldo ficará negativo.</div>` : ''),
+        ok: 'Sim, entrada paga',
+      });
+      if (!res) return;
+      v.entradaPaga = true; v.entradaPagaEm = hoje(); v.seqBaixa = Date.now();
+      v.dataBaixa = diaAnterior(v.dataEntrega);
+      commit('Entrada registrada. Encomenda confirmada.');
+    } else {
+      if (!await ask({ title: 'Desmarcar a entrada paga?', body: 'A encomenda volta para "Aguardando entrada" e os ingredientes voltam para o estoque.', ok: 'Desmarcar' })) return;
+      v.entradaPaga = false; v.entradaPagaEm = null;
+      commit('Entrada desmarcada.');
+    }
   },
   'sale-undo': async d => {
     const v = db.vendas.find(x => x.id === d.id);

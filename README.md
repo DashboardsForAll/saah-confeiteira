@@ -20,6 +20,18 @@ Site estático (HTML, CSS e JavaScript, sem build), publicado pelo GitHub Pages.
 4. Cadastre esse e-mail como editor: `insert into public.editores (email) values ('seu-email@exemplo.com');`
 5. Em **Project Settings → API**, copie a *Project URL* e a chave *anon/publishable* para `config.js`.
 
+## Logins e papéis
+
+Rode também `supabase/papeis.sql` e marque o primeiro administrador (instrução no fim do arquivo).
+
+| Papel | Pode |
+| --- | --- |
+| Administrador | Tudo: lança, edita e exclui qualquer registro, importa/restaura dados e libera acessos na aba **Acessos** |
+| Cliente | Lança e edita receitas, produtos, vendas e compras e confirma entregas; só exclui vendas |
+| Sem login (ou e-mail não liberado) | Só visualiza |
+
+Para dar acesso a alguém: o administrador libera o e-mail em **Acessos**; a pessoa clica em **Entrar para editar → Primeiro acesso**, cria a senha e confirma pelo link enviado ao e-mail. Em **Authentication → URL Configuration**, o *Site URL* deve ser o endereço do site publicado.
+
 ## Arquivos
 
 - `index.html`: página do site

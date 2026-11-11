@@ -279,6 +279,12 @@ tr.zero td { background: var(--danger-bg); }
 .head-actions { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .mes-filter { min-width: 190px; }
 
+.modal-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+/* Cliente: só exclui vendas; não restaura nem importa dados */
+.papel-cliente [data-action$="-del"]:not([data-action="sale-del"]),
+.papel-cliente [data-action="reset"], .papel-cliente [data-action="import"] { display: none !important; }
+
 /* Somente visualização: esconde o que altera dados */
 .readonly [data-action$="-new"], .readonly [data-action$="-del"], .readonly [data-action$="-edit"],
 .readonly [data-action="sale-deliver"], .readonly [data-action="sale-undo"],

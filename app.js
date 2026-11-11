@@ -187,7 +187,7 @@ function setReadonly(v) {
   document.body.classList.toggle('readonly', v);
   if (v) {
     sync.status = sync.kind === 'supabase'
-      ? (sync.session ? 'Somente visualização: este login não tem permissão de edição.' : 'Somente visualização. Entre para lançar dados.')
+      ? (sync.session ? 'Somente visualização: este e-mail ainda não tem acesso. Peça ao administrador para liberar em Acessos.' : 'Somente visualização. Entre para lançar dados.')
       : 'Somente visualização: peça acesso de edição à dona do painel para lançar dados.';
     renderFooter();
   }
@@ -254,15 +254,38 @@ async function initSupabase(cfg) {
   let session = null;
   try { session = (await client.auth.getSession()).data.session; } catch (e) { /* sem sessão */ }
   sync.session = session;
-  setReadonly(!session);
-  client.auth.onAuthStateChange((_evt, s) => {
-    const mudou = !!s !== !!sync.session;
+  await aplicarSessao();
+  client.auth.onAuthStateChange((evt, s) => {
+    if (evt === 'PASSWORD_RECOVERY') setTimeout(() => ACTIONS['nova-senha'](), 0);
+    const antes = sync.session && sync.session.user && sync.session.user.email;
+    const depois = s && s.user && s.user.email;
     sync.session = s;
-    if (mudou) { setReadonly(!s); if (s && sync.loaded) sync.status = STATUS_OK.supabase; render(); }
+    if (antes !== depois) setTimeout(() => aplicarSessao().then(render), 0);
   });
   render();
   attachStore(sync.store);
 }
+/* Papel do usuário logado: 'admin' (acesso total), 'cliente' (dia a dia) ou null (só visualiza) */
+async function aplicarSessao() {
+  sync.papel = null; sync.acessos = null;
+  const email = sync.session && sync.session.user && (sync.session.user.email || '').toLowerCase();
+  if (email) {
+    try {
+      const { data } = await sync.supa.from('editores').select('papel').eq('email', email).maybeSingle();
+      sync.papel = data ? data.papel : null;
+    } catch (e) { sync.papel = null; }
+  }
+  document.body.classList.toggle('papel-admin', sync.papel === 'admin');
+  document.body.classList.toggle('papel-cliente', sync.papel === 'cliente');
+  setReadonly(!sync.papel);
+  if (sync.papel && sync.loaded) sync.status = STATUS_OK.supabase;
+  if (sync.papel === 'admin') await carregarAcessos();
+}
+async function carregarAcessos() {
+  const { data, error } = await sync.supa.from('editores').select('email,papel').order('email');
+  sync.acessos = error ? [] : data;
+}
+const PAPEL_LABEL = { admin: 'Administrador', cliente: 'Cliente' };
 const STATUS_OK = {
   claude: 'Dados compartilhados: salvos no claude.ai e atualizados ao vivo.',
   supabase: 'Dados compartilhados: salvos online e atualizados ao vivo.',
@@ -1065,9 +1088,39 @@ function viewFinanceiro(L) {
 }
 
 /* =================== render =================== */
-const TABS = [['inicio', 'Início'], ['cardapio', 'Cardápio'], ['produtos', 'Produtos'], ['vendas', 'Vendas'], ['estoque', 'Estoque'], ['custos', 'Custos'], ['financeiro', 'Controle Financeiro']];
-const VIEWS = { inicio: viewInicio, cardapio: viewCardapio, produtos: viewProdutos, vendas: viewVendas, estoque: viewEstoque, custos: viewCustos, financeiro: viewFinanceiro };
-const route = () => { const r = location.hash.replace(/^#\/?/, ''); return VIEWS[r] ? r : 'inicio'; };
+/* =================== ACESSOS (só administrador) =================== */
+function viewAcessos() {
+  const eu = (sync.session && sync.session.user && sync.session.user.email || '').toLowerCase();
+  const lista = sync.acessos || [];
+  return pageHead('Acessos', 'Quem pode lançar dados no painel. Quem não está na lista só visualiza.') +
+    `<section class="card form-card">
+      <h3>Liberar acesso</h3>
+      <div class="form-grid">
+        <label class="field"><span>E-mail</span><input class="input" type="email" id="acesso-email" placeholder="email@exemplo.com" autocomplete="off"></label>
+        <label class="field"><span>Papel</span><select class="input" id="acesso-papel"><option value="cliente">Cliente: usa o painel no dia a dia</option><option value="admin">Administrador: acesso total</option></select></label>
+      </div>
+      <div class="form-actions"><button class="btn primary" data-action="acesso-add">${I.plus} Liberar acesso</button></div>
+      <p class="note">Depois de liberar, a pessoa abre o painel, clica em <b>Entrar para editar → Primeiro acesso</b>, cria a própria senha e confirma pelo link enviado ao e-mail.</p>
+    </section>
+    <section class="card mt">
+      <h2 class="card-title">Pessoas com acesso</h2>
+      ${lista.length ? `<div class="table-wrap"><table><thead><tr><th>E-mail</th><th>Papel</th><th></th></tr></thead><tbody>
+        ${lista.map(a => `<tr><td>${esc(a.email)}${a.email === eu ? ' <span class="muted small">(você)</span>' : ''}</td>
+          <td>${a.email === eu ? `<span class="pill gold">${PAPEL_LABEL[a.papel]}</span>`
+            : `<select class="input" style="max-width:200px" data-field="papel" data-email="${esc(a.email)}">${['cliente', 'admin'].map(p => `<option value="${p}" ${p === a.papel ? 'selected' : ''}>${PAPEL_LABEL[p]}</option>`).join('')}</select>`}</td>
+          <td>${a.email === eu ? '' : `<button class="icon-btn danger" data-action="acesso-del" data-email="${esc(a.email)}" title="Remover acesso">${I.trash}</button>`}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="empty">Carregando…</p>'}
+      <table class="compact mt"><tbody>
+        <tr><td><b>Administrador</b></td><td class="small muted">Tudo: lança, edita e exclui qualquer registro, importa e restaura dados e libera acessos.</td></tr>
+        <tr><td><b>Cliente</b></td><td class="small muted">Lança e edita receitas, produtos, vendas e compras e confirma entregas. Só exclui vendas.</td></tr>
+      </tbody></table>
+    </section>`;
+}
+
+const TABS = [['inicio', 'Início'], ['cardapio', 'Cardápio'], ['produtos', 'Produtos'], ['vendas', 'Vendas'], ['estoque', 'Estoque'], ['custos', 'Custos'], ['financeiro', 'Controle Financeiro'], ['acessos', 'Acessos']];
+const VIEWS = { inicio: viewInicio, cardapio: viewCardapio, produtos: viewProdutos, vendas: viewVendas, estoque: viewEstoque, custos: viewCustos, financeiro: viewFinanceiro, acessos: viewAcessos };
+const tabVisivel = k => k !== 'acessos' || sync.papel === 'admin';
+const route = () => { const r = location.hash.replace(/^#\/?/, ''); return VIEWS[r] && tabVisivel(r) ? r : 'inicio'; };
 
 function heroHtml() {
   const photo = getPhoto();
@@ -1079,7 +1132,7 @@ function heroHtml() {
 function render() {
   const r = route();
   const L = computeLedger();
-  document.getElementById('nav').innerHTML = TABS.map(([k, l]) => `<a href="#${k}" class="${k === r ? 'active' : ''}">${l}</a>`).join('');
+  document.getElementById('nav').innerHTML = TABS.filter(([k]) => tabVisivel(k)).map(([k, l]) => `<a href="#${k}" class="${k === r ? 'active' : ''}">${l}</a>`).join('');
   document.getElementById('hero').innerHTML = r === 'inicio' ? heroHtml() : '';
   document.getElementById('app').innerHTML = VIEWS[r](L);
   const names = new Set([...L.ings.values()].map(i => i.nome));
@@ -1094,7 +1147,8 @@ function renderFooter() {
   if (a) {
     a.innerHTML = sync.kind !== 'supabase' ? ''
       : sync.session
-        ? `<span>Conectado como ${esc(sync.session.user && sync.session.user.email)}</span> <button class="link" data-action="logout">Sair</button>`
+        ? `<span>Conectado como ${esc(sync.session.user && sync.session.user.email)}${sync.papel ? ` <span class="pill ${sync.papel === 'admin' ? 'gold' : ''}">${PAPEL_LABEL[sync.papel]}</span>` : ''}</span>
+           <button class="link" data-action="trocar-senha">Trocar senha</button> <button class="link" data-action="logout">Sair</button>`
         : '<button class="btn primary sm" data-action="login">Entrar para editar</button>';
   }
 }
@@ -1143,6 +1197,8 @@ function ask({ title, body = '', ok = 'Confirmar', danger = false, extra = '', c
         try { navigator.clipboard.writeText(ta.value).then(done, manual); } catch (err) { manual(); }
         return;
       }
+      const alt = e.target.closest('[data-m="alt"]');
+      if (alt) { e.preventDefault(); close({ __alt: alt.dataset.alt }); return; }
       if (e.target === wrap || e.target.closest('[data-m="cancel"]')) close(null);
       else if (e.target.closest('[data-m="ok"]')) { e.preventDefault(); close(values()); }
     });
@@ -1399,15 +1455,95 @@ const ACTIONS = {
   login: async () => {
     const res = await ask({
       title: 'Entrar para editar',
-      body: 'Use o e-mail e a senha cadastrados para editar o painel.',
+      body: 'Use o seu e-mail e a sua senha.',
       extra: field('E-mail', '<input class="input" type="email" name="email" autocomplete="username" required>') +
-        field('Senha', '<input class="input" type="password" name="senha" autocomplete="current-password" required>'),
+        field('Senha', '<input class="input" type="password" name="senha" autocomplete="current-password" required>') +
+        `<div class="modal-links"><button type="button" class="link" data-m="alt" data-alt="primeiro">Primeiro acesso: criar minha senha</button>
+          <button type="button" class="link" data-m="alt" data-alt="esqueci">Esqueci minha senha</button></div>`,
       ok: 'Entrar',
     });
-    if (!res || !res.email || !res.senha) return;
+    if (!res) return;
+    if (res.__alt === 'primeiro') return ACTIONS['primeiro-acesso']();
+    if (res.__alt === 'esqueci') return ACTIONS['esqueci-senha']();
+    if (!res.email || !res.senha) return;
     const { error } = await sync.supa.auth.signInWithPassword({ email: res.email.trim(), password: res.senha });
-    if (error) return toast('E-mail ou senha incorretos. Confira e tente de novo.', true);
-    toast('Pronto, agora você pode editar.');
+    if (error) {
+      if (/confirm/i.test(error.message || '')) return toast('Confirme seu e-mail pelo link que enviamos antes de entrar.', true);
+      return toast('E-mail ou senha incorretos. Confira e tente de novo.', true);
+    }
+    toast('Bem-vinda(o)! Carregando seu acesso…');
+  },
+  'primeiro-acesso': async () => {
+    const res = await ask({
+      title: 'Primeiro acesso',
+      body: 'Use o e-mail que o administrador liberou e crie uma senha com pelo menos 8 caracteres.',
+      extra: field('E-mail', '<input class="input" type="email" name="email" autocomplete="username" required>') +
+        field('Nova senha', '<input class="input" type="password" name="senha" autocomplete="new-password" minlength="8" required>') +
+        field('Repita a senha', '<input class="input" type="password" name="senha2" autocomplete="new-password" minlength="8" required>'),
+      ok: 'Criar senha',
+    });
+    if (!res || !res.email) return;
+    if ((res.senha || '').length < 8) return toast('A senha precisa ter pelo menos 8 caracteres.', true);
+    if (res.senha !== res.senha2) return toast('As duas senhas não são iguais.', true);
+    const { data, error } = await sync.supa.auth.signUp({
+      email: res.email.trim(), password: res.senha,
+      options: { emailRedirectTo: location.origin + location.pathname },
+    });
+    if (error) {
+      if (/registered|exists/i.test(error.message || '')) return toast('Este e-mail já tem senha. Use "Entrar" ou "Esqueci minha senha".', true);
+      return toast('Não foi possível criar a senha: ' + error.message, true);
+    }
+    if (data.session) return toast('Senha criada. Você já está conectada(o).');
+    await ask({
+      title: 'Confirme seu e-mail',
+      body: `Enviamos um link para <b>${esc(res.email.trim())}</b>. Abra o e-mail, clique no link e depois entre com a senha que você criou. Se não encontrar, olhe a caixa de spam.`,
+      ok: 'Entendi', cancel: false,
+    });
+  },
+  'esqueci-senha': async () => {
+    const res = await ask({
+      title: 'Esqueci minha senha',
+      body: 'Enviaremos um link para você criar uma nova senha.',
+      extra: field('E-mail', '<input class="input" type="email" name="email" autocomplete="username" required>'),
+      ok: 'Enviar link',
+    });
+    if (!res || !res.email) return;
+    const { error } = await sync.supa.auth.resetPasswordForEmail(res.email.trim(), { redirectTo: location.origin + location.pathname });
+    if (error) return toast('Não foi possível enviar o link agora. Tente de novo em alguns minutos.', true);
+    toast('Link enviado. Confira seu e-mail (e a caixa de spam).');
+  },
+  'nova-senha': async () => {
+    const res = await ask({
+      title: 'Criar nova senha',
+      extra: field('Nova senha', '<input class="input" type="password" name="senha" autocomplete="new-password" minlength="8" required>') +
+        field('Repita a senha', '<input class="input" type="password" name="senha2" autocomplete="new-password" minlength="8" required>'),
+      ok: 'Salvar senha',
+    });
+    if (!res) return;
+    if ((res.senha || '').length < 8) return toast('A senha precisa ter pelo menos 8 caracteres.', true);
+    if (res.senha !== res.senha2) return toast('As duas senhas não são iguais.', true);
+    const { error } = await sync.supa.auth.updateUser({ password: res.senha });
+    if (error) return toast('Não foi possível salvar a senha: ' + error.message, true);
+    toast('Senha atualizada.');
+  },
+  'trocar-senha': () => ACTIONS['nova-senha'](),
+
+  /* Acessos (administrador) */
+  'acesso-add': async () => {
+    const email = (document.getElementById('acesso-email').value || '').trim().toLowerCase();
+    const papel = document.getElementById('acesso-papel').value;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail('Digite um e-mail válido.');
+    const { error } = await sync.supa.from('editores').upsert({ email, papel });
+    if (error) return fail('Não foi possível liberar o acesso: ' + error.message);
+    await carregarAcessos(); render();
+    toast(`Acesso liberado para ${email} como ${PAPEL_LABEL[papel]}.`);
+  },
+  'acesso-del': async d => {
+    if (!await ask({ title: `Remover o acesso de ${d.email}?`, body: 'A pessoa continua vendo o painel, mas não consegue mais lançar dados.', ok: 'Remover', danger: true })) return;
+    const { error } = await sync.supa.from('editores').delete().eq('email', d.email);
+    if (error) return fail('Não foi possível remover: ' + error.message);
+    await carregarAcessos(); render();
+    toast('Acesso removido.');
   },
   logout: async () => {
     await sync.supa.auth.signOut();
@@ -1455,6 +1591,12 @@ document.addEventListener('change', e => {
     setPath(ui, t.dataset.bind, valOf(t));
     syncDerived(t.dataset.bind);
     if ('rerender' in t.dataset) render(); else refreshPreviews();
+  } else if (t.dataset.field === 'papel') {
+    sync.supa.from('editores').update({ papel: t.value }).eq('email', t.dataset.email).then(async ({ error }) => {
+      if (error) toast('Não foi possível mudar o papel: ' + error.message, true);
+      else toast(`${t.dataset.email} agora é ${PAPEL_LABEL[t.value]}.`);
+      await carregarAcessos(); render();
+    });
   } else if (t.dataset.field === 'dataBaixa') {
     const v = db.vendas.find(x => x.id === t.dataset.id); if (v && t.value) { v.dataBaixa = t.value; save(); toast('Data da baixa atualizada.'); }
   } else if (t.id === 'file-import' && t.files[0]) {

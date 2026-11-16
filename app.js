@@ -1140,10 +1140,13 @@ function viewEstoque(L) {
   const t = ui.estoqueTab;
   let body = '';
   if (t === 'saldo') {
-    const tot = { c: sum(ings, i => i.valorComprado), u: sum(ings, i => i.valorUsado), s: sum(ings, i => Math.max(i.saldo, 0) * i.avg) };
+    // a lista de estoque mostra só ingredientes com compras; os que existem apenas nas receitas vão para a nota abaixo
+    const soReceita = ings.filter(i => !i.compras);
+    const lista = ings.filter(i => i.compras);
+    const tot = { c: sum(lista, i => i.valorComprado), u: sum(lista, i => i.valorUsado), s: sum(lista, i => Math.max(i.saldo, 0) * i.avg) };
     body = `<table><thead><tr><th>Ingrediente</th><th class="num">Comprado</th><th class="num">Consumido (baixa)</th><th class="num">Saldo</th><th class="num">Custo médio</th><th class="num">Valor em estoque</th><th></th></tr></thead>
-      <tbody>${ings.map(i => `<tr class="${i.saldo <= EPS ? 'zero' : ''}">
-        <td><span class="ing-name">${I.box} ${esc(i.nome)}</span>${i.compras ? '' : '<span class="sub">sem compra registrada</span>'}</td>
+      <tbody>${lista.map(i => `<tr class="${i.saldo <= EPS ? 'zero' : ''}">
+        <td><span class="ing-name">${I.box} ${esc(i.nome)}</span></td>
         <td class="num">${fmtNum(i.comprado)} ${esc(i.medida)}<span class="sub">${brl(i.valorComprado)}</span></td>
         <td class="num">${fmtNum(i.usado)} ${esc(i.medida)}<span class="sub">${brl(i.valorUsado)}</span></td>
         <td class="num"><b class="${i.saldo <= EPS ? 'warn' : ''}">${fmtNum(i.saldo)} ${esc(i.medida)}</b></td>
@@ -1151,7 +1154,9 @@ function viewEstoque(L) {
         <td class="num">${brl(Math.max(i.saldo, 0) * i.avg)}</td>
         <td style="white-space:nowrap">${i.compras ? `<button class="icon-btn" data-action="ing-compras" data-key="${esc(i.key)}" title="Ver e editar as compras de ${esc(i.nome)}">${I.edit}</button>
           <button class="icon-btn danger" data-action="ingrediente-del" data-key="${esc(i.key)}" title="Excluir ${esc(i.nome)} do estoque">${I.trash}</button>` : ''}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td>Saldo total</td><td class="num">${brl(tot.c)}</td><td class="num">${brl(tot.u)}</td><td class="num">${ings.filter(i => i.saldo > EPS).length} itens com saldo</td><td></td><td class="num">${brl(tot.s)}</td><td></td></tr></tfoot></table>`;
+      <tfoot><tr><td>Saldo total</td><td class="num">${brl(tot.c)}</td><td class="num">${brl(tot.u)}</td><td class="num">${lista.filter(i => i.saldo > EPS).length} itens com saldo</td><td></td><td class="num">${brl(tot.s)}</td><td></td></tr></tfoot></table>` +
+      (lista.length ? '' : '<p class="empty">Nenhum ingrediente em estoque. Clique em "Incluir ingrediente" ou importe uma nota fiscal.</p>') +
+      (soReceita.length ? `<p class="note">Usados nas receitas e ainda sem compra no estoque: ${soReceita.map(i => esc(i.nome)).join(', ')}.</p>` : '');
   } else if (t === 'compras') {
     const filtro = ui.filtroIng && L.ings.get(ui.filtroIng);
     const movs = ings.filter(i => !filtro || i === filtro).flatMap(i => i.movs.filter(m => m.tipo === 'entrada').map(m => ({ ...m, ing: i }))).sort((a, b) => (a.data < b.data ? 1 : -1));
@@ -1673,7 +1678,7 @@ const ACTIONS = {
       title: `Excluir ${ing.nome} do estoque?`,
       body: `Serão apagadas <b>${compras.length} ${plural(compras.length, 'compra', 'compras')}</b> (${brl(sum(compras, c => num(c.valor)))}). Não dá para desfazer.` +
         (ing.usado > EPS ? `<div class="warn-box">Já foram baixados ${fmtNum(ing.usado)} ${esc(ing.medida)} em produções e encomendas. Sem as compras, o saldo fica negativo.</div>` : '') +
-        (usadoEm.length ? `<p class="note">As receitas ${usadoEm.map(esc).join(', ')} continuam usando este ingrediente; ele passa a aparecer como "sem compra registrada".</p>` : ''),
+        (usadoEm.length ? `<p class="note">As receitas ${usadoEm.map(esc).join(', ')} continuam usando este ingrediente. Ele sai da lista do estoque e passa a aparecer em "Sem estoque", na página Início.</p>` : ''),
       ok: 'Excluir ingrediente', danger: true,
     });
     if (!res) return;

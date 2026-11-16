@@ -280,6 +280,14 @@ tr.zero td { background: var(--danger-bg); }
 .mes-filter { min-width: 190px; }
 
 .modal-links { display: flex; flex-wrap: wrap; gap: 16px; }
+.filtro-chip { display: inline-flex; gap: 10px; align-items: center; background: var(--surface-2); border-radius: 999px; padding: 6px 14px; font-size: 13px; margin-bottom: 12px; }
+.nf-btn { cursor: pointer; }
+.nf-table td { vertical-align: top; }
+.nf-table .input { padding: 6px 8px; min-width: 0; }
+.nf-table td:nth-child(3) .input { min-width: 170px; }
+.nf-off td { opacity: .45; }
+.nf-texto { white-space: pre-wrap; font-size: 12px; background: var(--surface-2); border-radius: 12px; padding: 12px; max-height: 260px; overflow: auto; }
+.readonly .nf-btn { display: none !important; }
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .entrada-check { font-size: 13px; margin-right: 6px; white-space: nowrap; }
 .entrada-check input { width: 15px; height: 15px; }

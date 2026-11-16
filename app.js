@@ -997,6 +997,143 @@ function compraFormHtml() {
     </div>
   </section>`;
 }
+/* =================== NOTA FISCAL (foto → compras) ===================
+   Lê a foto no próprio navegador (Tesseract.js, OCR em português), separa as linhas de itens
+   e mostra uma tela de conferência antes de lançar. Nada é enviado para servidores de terceiros
+   além do download do modelo de OCR. */
+const UN_NOTA = { UN: 'unidade', UND: 'unidade', UNID: 'unidade', PC: 'unidade', PCT: 'pacote', PT: 'pacote', CX: 'caixa', LT: 'litros', L: 'litros', ML: 'ml', KG: 'kg', G: 'g', GR: 'g', DZ: 'unidade', FD: 'pacote', SC: 'pacote', BD: 'unidade' };
+const MOEDA = '(\\d{1,3}(?:\\.\\d{3})*,\\d{2})';
+const UNS = '(UN|UND|UNID|PC|PCT|PT|CX|LT|L|ML|KG|G|GR|DZ|FD|SC|BD)';
+const IGNORAR_NOTA = /total|subtotal|troco|desconto|valor pago|dinheiro|cart[aã]o|cr[eé]dito|d[eé]bito|\bpix\b|tribut|icms|cpf|cnpj|forma.*pag|acr[eé]scimo|consumidor|protocolo|chave de acesso|s[eé]rie|qtd\.?\s*total|n[uú]mero/i;
+
+function nomeBonito(s) {
+  return s.toLowerCase().replace(/\b(\d+(?:[.,]\d+)?\s?(kg|g|gr|ml|l|lt))\b/gi, '').replace(/\s+/g, ' ').trim()
+    .replace(/(^|\s)\S/g, c => c.toUpperCase());
+}
+/* Ingrediente já conhecido cujo nome aparece na descrição (o mais específico vence) */
+function casarIngrediente(desc, L) {
+  const d = ' ' + norm(desc).replace(/[^a-z0-9% ]/g, ' ') + ' ';
+  let melhor = null;
+  const nomes = new Map();
+  L.ings.forEach(i => nomes.set(i.key, i));
+  for (const [k, ing] of nomes) {
+    const palavras = k.replace(/[^a-z0-9% ]/g, ' ').split(' ').filter(w => w.length > 1 && !/^(de|da|do|em|com)$/.test(w));
+    if (!palavras.length) continue;
+    if (palavras.every(w => d.includes(' ' + w) || d.includes(w + ' '))) {
+      if (!melhor || k.length > melhor.key.length) melhor = ing;
+    }
+  }
+  return melhor;
+}
+function itemDaNota(desc, qtd, un, total, L) {
+  desc = desc.replace(/^[\s\d.]+(?=[A-Za-zÀ-ú])/, '').trim();
+  un = (un || 'UN').toUpperCase().replace('.', '');
+  let qtdNota = qtd > 0 ? qtd : 1;
+  if (un === 'DZ') qtdNota *= 12;
+  const pkg = desc.match(/(\d+(?:[.,]\d+)?)\s?(KG|GR|G|ML|LT|L)\b/i);
+  const pkgQ = pkg ? num(pkg[1]) : NaN, pkgU = pkg ? unitKey(UN_NOTA[pkg[2].toUpperCase()] || pkg[2]) : null;
+  const ing = casarIngrediente(desc, L);
+  let quantidade = qtdNota, medida = UN_NOTA[un] || 'unidade', confira = !ing;
+  if (ing && ing.compras) {
+    const famIng = UNITS[ing.unit] && UNITS[ing.unit].fam;
+    if (pkg && pkgU && UNITS[pkgU] && UNITS[pkgU].fam === famIng && !['kg', 'g', 'litros', 'ml'].includes(UN_NOTA[un])) {
+      quantidade = convert(qtdNota * pkgQ, pkgU, ing.unit); medida = ing.medida;
+    } else if (convert(qtdNota, unitKey(medida), ing.unit) != null) {
+      quantidade = convert(qtdNota, unitKey(medida), ing.unit); medida = ing.medida;
+    } else if (['un', 'caixa', 'lata', 'pacote'].includes(ing.unit)) {
+      medida = ing.medida;
+    } else confira = true;
+  } else if (pkg && pkgU && medida === 'unidade') {
+    quantidade = qtdNota * pkgQ; medida = UN_NOTA[pkg[2].toUpperCase()] || pkg[2].toLowerCase();
+  }
+  return { incluir: true, descricao: desc, ingrediente: ing ? ing.nome : nomeBonito(desc), quantidade: inputNum(round2(quantidade)), medida, valor: inputNum(round2(total)), confira };
+}
+function lerNota(texto, L) {
+  const linhas = texto.split(/\r?\n/).map(l => l.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const dm = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  const data = dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : hoje();
+  const reCompleta = new RegExp(`^(?:\\d{1,4}\\s+)?(?:\\d{6,14}\\s+)?(.+?)\\s+(\\d+(?:[.,]\\d{1,3})?)\\s*${UNS}\\.?\\s*[xX*×]\\s*${MOEDA}\\s+(?:[A-Z]{1,2}\\d*\\s+)?${MOEDA}`, 'i');
+  const reSoQtd = new RegExp(`^(\\d+(?:[.,]\\d{1,3})?)\\s*${UNS}\\.?\\s*[xX*×]\\s*${MOEDA}\\s+(?:[A-Z]{1,2}\\d*\\s+)?${MOEDA}`, 'i');
+  const reSimples = new RegExp(`^(?:\\d{1,4}\\s+)?(?:\\d{6,14}\\s+)?([A-Za-zÀ-ú].{2,}?)\\s+${MOEDA}$`);
+  const itens = [];
+  let descAnterior = null;
+  for (const l of linhas) {
+    if (IGNORAR_NOTA.test(l)) { descAnterior = null; continue; }
+    let m;
+    if ((m = l.match(reSoQtd)) && descAnterior) { itens.push(itemDaNota(descAnterior, num(m[1]), m[2], num(m[4]), L)); descAnterior = null; continue; }
+    if ((m = l.match(reCompleta))) { itens.push(itemDaNota(m[1], num(m[2]), m[3], num(m[5]), L)); descAnterior = null; continue; }
+    if ((m = l.match(reSimples))) { itens.push(itemDaNota(m[1], 1, 'UN', num(m[2]), L)); descAnterior = null; continue; }
+    descAnterior = /[A-Za-zÀ-ú]{3}/.test(l) && !new RegExp(MOEDA).test(l) ? l : null;
+  }
+  return { data, itens };
+}
+/* Foto → canvas em tons de cinza e com mais contraste (melhora o OCR) */
+function prepararImagem(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 2200 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      const ctx = c.getContext('2d');
+      ctx.filter = 'grayscale(1) contrast(1.35)';
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c);
+    };
+    img.onerror = () => reject(new Error('imagem inválida'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function importarNota(file) {
+  if (!window.Tesseract) return toast('A leitura de nota fiscal não está disponível nesta página.', true);
+  ui.nf = { status: 'lendo', progresso: 0 }; ui.estoqueTab = 'compras'; render();
+  const atualizar = p => { const el = document.getElementById('nf-progresso'); if (el) el.textContent = `${Math.round(p * 100)}%`; };
+  let worker;
+  try {
+    const canvas = await prepararImagem(file);
+    worker = await window.Tesseract.createWorker('por', 1, { logger: m => { if (m.status === 'recognizing text') atualizar(m.progress); } });
+    const { data } = await worker.recognize(canvas);
+    const lido = lerNota(data.text || '', computeLedger());
+    ui.nf = { status: 'conferir', texto: data.text || '', data: lido.data, itens: lido.itens };
+    if (!lido.itens.length) toast('Não encontrei itens na foto. Tente uma foto mais nítida, reta e com boa luz.', true);
+  } catch (e) {
+    ui.nf = null;
+    toast('Não foi possível ler a nota. Confira a conexão e tente outra foto.', true);
+  } finally {
+    if (worker) worker.terminate().catch(() => {});
+    render();
+  }
+}
+function notaHtml() {
+  const nf = ui.nf;
+  if (nf.status === 'lendo') {
+    return `<section class="card form-card"><h3>Lendo a nota fiscal… <span id="nf-progresso">0%</span></h3>
+      <p class="note">Na primeira vez pode levar alguns segundos a mais, porque o leitor de texto é baixado.</p></section>`;
+  }
+  const marcados = nf.itens.filter(i => i.incluir);
+  return `<section class="card form-card">
+    <h3>Conferir itens da nota fiscal</h3>
+    <p class="note" style="margin-top:0">Confira cada linha antes de lançar: ajuste o nome do ingrediente (use o mesmo do estoque), a quantidade, a medida e o valor total do item. Desmarque o que não é ingrediente (embalagens, sacolas etc.).</p>
+    <div class="form-grid" style="max-width:420px">${field('Data da compra', inp('nf.data', nf.data, 'type="date"'))}</div>
+    ${nf.itens.length ? `<div class="table-wrap mt"><table class="nf-table"><thead><tr><th></th><th>Na nota</th><th>Ingrediente</th><th class="num">Quantidade</th><th>Medida</th><th class="num">Valor total (R$)</th></tr></thead><tbody>
+      ${nf.itens.map((it, i) => `<tr class="${it.incluir ? '' : 'nf-off'}">
+        <td><input type="checkbox" data-bind="nf.itens.${i}.incluir" data-rerender ${it.incluir ? 'checked' : ''} aria-label="Lançar este item"></td>
+        <td class="small">${esc(it.descricao)}${it.confira ? '<span class="sub warn">Confira o nome e a medida</span>' : ''}</td>
+        <td>${inp(`nf.itens.${i}.ingrediente`, it.ingrediente, 'list="dl-ings"')}</td>
+        <td>${inp(`nf.itens.${i}.quantidade`, it.quantidade, 'inputmode="decimal" style="width:90px;text-align:right"')}</td>
+        <td>${inp(`nf.itens.${i}.medida`, it.medida, 'list="dl-medidas" style="width:120px"')}</td>
+        <td>${inp(`nf.itens.${i}.valor`, it.valor, 'inputmode="decimal" style="width:100px;text-align:right"')}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="empty">Nenhum item encontrado. Use "Adicionar linha" ou tente outra foto.</p>'}
+    <div style="margin-top:10px"><button class="btn soft sm" data-action="nf-linha">${I.plus} Adicionar linha</button></div>
+    <details class="mt"><summary class="small muted">Ver o texto lido da foto</summary><pre class="nf-texto">${esc(nf.texto)}</pre></details>
+    <div class="form-actions">
+      <button class="btn primary" data-action="nf-save">Lançar ${marcados.length} ${plural(marcados.length, 'compra', 'compras')}</button>
+      <button class="btn ghost" data-action="nf-cancel">Cancelar</button>
+    </div>
+  </section>`;
+}
+
 function viewEstoque(L) {
   const open = !!ui.compraForm;
   const ings = [...L.ings.values()].sort((a, b) => a.nome.localeCompare(b.nome));
@@ -1004,25 +1141,29 @@ function viewEstoque(L) {
   let body = '';
   if (t === 'saldo') {
     const tot = { c: sum(ings, i => i.valorComprado), u: sum(ings, i => i.valorUsado), s: sum(ings, i => Math.max(i.saldo, 0) * i.avg) };
-    body = `<table><thead><tr><th>Ingrediente</th><th class="num">Comprado</th><th class="num">Consumido (baixa)</th><th class="num">Saldo</th><th class="num">Custo médio</th><th class="num">Valor em estoque</th></tr></thead>
+    body = `<table><thead><tr><th>Ingrediente</th><th class="num">Comprado</th><th class="num">Consumido (baixa)</th><th class="num">Saldo</th><th class="num">Custo médio</th><th class="num">Valor em estoque</th><th></th></tr></thead>
       <tbody>${ings.map(i => `<tr class="${i.saldo <= EPS ? 'zero' : ''}">
         <td><span class="ing-name">${I.box} ${esc(i.nome)}</span>${i.compras ? '' : '<span class="sub">sem compra registrada</span>'}</td>
         <td class="num">${fmtNum(i.comprado)} ${esc(i.medida)}<span class="sub">${brl(i.valorComprado)}</span></td>
         <td class="num">${fmtNum(i.usado)} ${esc(i.medida)}<span class="sub">${brl(i.valorUsado)}</span></td>
         <td class="num"><b class="${i.saldo <= EPS ? 'warn' : ''}">${fmtNum(i.saldo)} ${esc(i.medida)}</b></td>
         <td class="num">${i.compras ? brl(i.avg) + `<span class="sub">por ${esc(i.medida)}</span>` : '—'}</td>
-        <td class="num">${brl(Math.max(i.saldo, 0) * i.avg)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td>Saldo total</td><td class="num">${brl(tot.c)}</td><td class="num">${brl(tot.u)}</td><td class="num">${ings.filter(i => i.saldo > EPS).length} itens com saldo</td><td></td><td class="num">${brl(tot.s)}</td></tr></tfoot></table>`;
+        <td class="num">${brl(Math.max(i.saldo, 0) * i.avg)}</td>
+        <td style="white-space:nowrap">${i.compras ? `<button class="icon-btn" data-action="ing-compras" data-key="${esc(i.key)}" title="Ver e editar as compras de ${esc(i.nome)}">${I.edit}</button>
+          <button class="icon-btn danger" data-action="ingrediente-del" data-key="${esc(i.key)}" title="Excluir ${esc(i.nome)} do estoque">${I.trash}</button>` : ''}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>Saldo total</td><td class="num">${brl(tot.c)}</td><td class="num">${brl(tot.u)}</td><td class="num">${ings.filter(i => i.saldo > EPS).length} itens com saldo</td><td></td><td class="num">${brl(tot.s)}</td><td></td></tr></tfoot></table>`;
   } else if (t === 'compras') {
-    const movs = ings.flatMap(i => i.movs.filter(m => m.tipo === 'entrada').map(m => ({ ...m, ing: i }))).sort((a, b) => (a.data < b.data ? 1 : -1));
-    body = movs.length ? `<table><thead><tr><th>Data</th><th>Ingrediente</th><th class="num">Quantidade</th><th class="num">Valor da compra</th><th class="num">Custo da leva</th><th class="num">Custo médio após</th><th></th></tr></thead>
+    const filtro = ui.filtroIng && L.ings.get(ui.filtroIng);
+    const movs = ings.filter(i => !filtro || i === filtro).flatMap(i => i.movs.filter(m => m.tipo === 'entrada').map(m => ({ ...m, ing: i }))).sort((a, b) => (a.data < b.data ? 1 : -1));
+    body = (filtro ? `<div class="filtro-chip">Compras de <b>${esc(filtro.nome)}</b> <button class="link" data-action="ing-compras" data-key="">Mostrar todas</button></div>` : '') +
+      (movs.length ? `<table><thead><tr><th>Data</th><th>Ingrediente</th><th class="num">Quantidade</th><th class="num">Valor da compra</th><th class="num">Custo da leva</th><th class="num">Custo médio após</th><th></th></tr></thead>
       <tbody>${movs.map(m => `<tr><td>${fmtDate(m.data)}</td><td><span class="ing-name">${I.box} ${esc(m.ing.nome)}</span></td>
         <td class="num">${fmtNum(m.qtd)} ${esc(m.ing.medida)}</td><td class="num">${brl(m.valor)}</td>
         <td class="num">${brl(m.custoUnit)}</td><td class="num">${brl(m.avgDepois)}${m.avgAntes ? `<span class="sub">antes ${brl(m.avgAntes)}</span>` : ''}</td>
-        <td style="white-space:nowrap"><button class="icon-btn" data-action="compra-edit" data-id="${m.compraId}" title="Editar compra">${I.edit}</button>
+        <td style="white-space:nowrap"><button class="btn soft sm" data-action="compra-edit" data-id="${m.compraId}" title="Corrigir quantidade, medida, valor ou data">${I.edit} Editar</button>
           <button class="icon-btn danger" data-action="compra-del" data-id="${m.compraId}" title="Excluir compra">${I.trash}</button></td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="3">Total comprado</td><td class="num">${brl(sum(movs, m => m.valor))}</td><td colspan="3"></td></tr></tfoot></table>`
-      : '<p class="empty">Nenhuma compra registrada.</p>';
+      : '<p class="empty">Nenhuma compra registrada.</p>');
   } else {
     const movs = ings.flatMap(i => i.movs.filter(m => m.tipo === 'saida').map(m => ({ ...m, ing: i }))).sort((a, b) => (a.data < b.data ? 1 : -1));
     body = movs.length ? `<table><thead><tr><th>Data</th><th>Ingrediente</th><th class="num">Quantidade</th><th class="num">Custo (médio)</th><th>Origem</th><th class="num">Saldo após</th></tr></thead>
@@ -1033,7 +1174,10 @@ function viewEstoque(L) {
       : '<p class="empty">Nenhuma baixa ainda. As baixas acontecem ao incluir produtos e ao entregar encomendas.</p>';
   }
   return pageHead('Estoque', 'Ingredientes comprados e usados para fazer os bolos. Custo por média ponderada.',
-    open ? '' : `<button class="btn primary" data-action="compra-new">${I.plus} Incluir ingrediente</button>`) +
+    open || ui.nf ? '' : `<div class="head-actions">
+      ${window.Tesseract ? `<label class="btn soft nf-btn" title="Tire ou escolha uma foto da nota fiscal">${I.box} Importar nota fiscal<input type="file" id="file-nf" accept="image/*" hidden></label>` : ''}
+      <button class="btn primary" data-action="compra-new">${I.plus} Incluir ingrediente</button></div>`) +
+    (ui.nf ? notaHtml() : '') +
     (open ? compraFormHtml() : '') +
     `<section class="card ${open ? 'mt' : ''}">
       <div class="subtabs">${[['saldo', 'Saldo por ingrediente'], ['compras', 'Compras (entradas)'], ['baixas', 'Baixas (consumo)']].map(([k, l]) => `<button class="${t === k ? 'active' : ''}" data-action="estoque-tab" data-t="${k}">${l}</button>`).join('')}</div>
@@ -1490,6 +1634,54 @@ const ACTIONS = {
     if (old) db.compras = db.compras.map(c => (c.id === old.id ? compra : c)); else db.compras.push(compra);
     ui.compraForm = null; commit(old ? 'Compra atualizada. Custo médio recalculado.' : 'Compra incluída. Custo médio recalculado.');
   },
+  'nf-cancel': () => { ui.nf = null; render(); },
+  'nf-linha': () => {
+    ui.nf.itens.push({ incluir: true, descricao: '(incluído à mão)', ingrediente: '', quantidade: '', medida: '', valor: '', confira: false });
+    render();
+  },
+  'nf-save': () => {
+    const nf = ui.nf;
+    const linhas = nf.itens.map((it, i) => ({ ...it, n: i + 1 })).filter(it => it.incluir);
+    if (!linhas.length) return fail('Marque pelo menos um item para lançar.');
+    if (!nf.data) return fail('Informe a data da compra.');
+    const L = computeLedger();
+    const novas = [];
+    const base = Date.now();
+    for (const it of linhas) {
+      const nome = String(it.ingrediente || '').trim(), medida = String(it.medida || '').trim();
+      const q = num(it.quantidade), v = num(it.valor);
+      if (!nome) return fail(`Linha ${it.n}: informe o ingrediente.`);
+      if (!(q > 0)) return fail(`Linha ${it.n} (${nome}): informe a quantidade.`);
+      if (!medida) return fail(`Linha ${it.n} (${nome}): informe a medida.`);
+      if (!(v >= 0)) return fail(`Linha ${it.n} (${nome}): informe o valor.`);
+      const ing = L.ings.get(ingKey(nome));
+      if (ing && ing.compras && convert(q, unitKey(medida), ing.unit) == null) return fail(`Linha ${it.n}: ${ing.nome} é controlado em "${ing.medida}". Ajuste a quantidade e a medida.`);
+      novas.push({ id: uid(), seq: base + novas.length, ingrediente: ing && ing.compras ? ing.nome : nome, quantidade: q, medida, valor: round2(v), data: nf.data });
+    }
+    db.compras.push(...novas);
+    ui.nf = null; ui.filtroIng = null; ui.estoqueTab = 'compras';
+    commit(`${novas.length} ${plural(novas.length, 'compra lançada', 'compras lançadas')} da nota fiscal. Custo médio recalculado.`);
+  },
+  'ing-compras': d => { ui.filtroIng = d.key || null; ui.estoqueTab = 'compras'; render(); },
+  'ingrediente-del': async d => {
+    const L = computeLedger();
+    const ing = L.ings.get(d.key);
+    if (!ing) return;
+    const compras = db.compras.filter(c => ingKey(c.ingrediente) === d.key);
+    const usadoEm = db.receitas.filter(r => recipeItems(r).some(it => ingKey(it.ingrediente) === d.key)).map(r => r.nome);
+    const res = await ask({
+      title: `Excluir ${ing.nome} do estoque?`,
+      body: `Serão apagadas <b>${compras.length} ${plural(compras.length, 'compra', 'compras')}</b> (${brl(sum(compras, c => num(c.valor)))}). Não dá para desfazer.` +
+        (ing.usado > EPS ? `<div class="warn-box">Já foram baixados ${fmtNum(ing.usado)} ${esc(ing.medida)} em produções e encomendas. Sem as compras, o saldo fica negativo.</div>` : '') +
+        (usadoEm.length ? `<p class="note">As receitas ${usadoEm.map(esc).join(', ')} continuam usando este ingrediente; ele passa a aparecer como "sem compra registrada".</p>` : ''),
+      ok: 'Excluir ingrediente', danger: true,
+    });
+    if (!res) return;
+    const ids = new Set(compras.map(c => c.id));
+    db.compras = db.compras.filter(c => !ids.has(c.id));
+    if (ui.filtroIng === d.key) ui.filtroIng = null;
+    commit(`${ing.nome} excluído do estoque.`);
+  },
   'compra-edit': d => {
     const c = db.compras.find(x => x.id === d.id);
     if (!c) return;
@@ -1641,6 +1833,9 @@ document.addEventListener('change', e => {
     setPath(ui, t.dataset.bind, valOf(t));
     syncDerived(t.dataset.bind);
     if ('rerender' in t.dataset) render(); else refreshPreviews();
+  } else if (t.id === 'file-nf' && t.files[0]) {
+    const f = t.files[0]; t.value = '';
+    importarNota(f);
   } else if (t.dataset.field === 'papel') {
     sync.supa.from('editores').update({ papel: t.value }).eq('email', t.dataset.email).then(async ({ error }) => {
       if (error) toast('Não foi possível mudar o papel: ' + error.message, true);

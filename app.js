@@ -203,7 +203,7 @@ function setReadonly(v) {
     renderFooter();
   }
 }
-const FOTO_PADRAO = 'foto-saah.jpg';
+const FOTO_PADRAO = 'logo-saah.jpg';
 function getPhoto() {
   if (sync.mode === 'db') return sync.foto || FOTO_PADRAO;
   try { return localStorage.getItem(PHOTO_KEY) || FOTO_PADRAO; } catch (e) { return FOTO_PADRAO; }
@@ -1290,7 +1290,7 @@ const route = () => { const r = location.hash.replace(/^#\/?/, ''); return VIEWS
 function heroHtml() {
   const photo = getPhoto();
   return `<section class="hero"><div class="container">
-    <label class="avatar" title="Clique para trocar a foto">${photo ? `<img src="${photo}" alt="Foto da Saah">` : '<span class="logo">Saah</span>'}
+    <label class="avatar" title="Clique para trocar a foto">${photo ? `<img src="${photo}" alt="Logotipo Saah Confeiteira">` : '<span class="logo">Saah</span>'}
       <span class="hint">Trocar foto</span><input id="file-photo" type="file" accept="image/*" hidden></label>
     <div><h1>Saah Confeiteira</h1><p>Painel de receitas, despesas, custos e estoque</p></div></div></section>`;
 }

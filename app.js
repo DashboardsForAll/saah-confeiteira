@@ -657,10 +657,37 @@ function nucleoNome(s) {
 }
 const tipoDaReceita = nome => { const n = norm(nome); const t = TIPO_RECEITA.find(([, re]) => re.test(n)); return t ? t[0] : null; };
 const nomeItem = it => (typeof it === 'string' ? it : it.nome);
-/* receitas do Cardápio que correspondem a um item da tabela */
+/* Itens da tabela numa lista só, com chave estável "categoria|grupo|item" (gravada na receita/produto) */
+const ITENS_TABELA = TABELA_PRECOS.flatMap(c => c.grupos.flatMap(g => g.itens.map(it => ({
+  key: `${c.id}|${g.nome}|${nomeItem(it)}`, cat: c, grupo: g, nome: nomeItem(it),
+  preco: typeof it === 'string' ? g.preco : it.preco, un: g.un, aPartir: !!g.aPartir,
+}))));
+const itemTabela = key => (key && ITENS_TABELA.find(i => i.key === key)) || null;
+const rotuloItem = i => `${i.cat.grupos.length > 1 ? i.grupo.nome + ' · ' : ''}${i.nome} — ${i.aPartir ? 'a partir de ' : ''}${brl(i.preco)}/${i.un}`;
+/* sugestão pelo nome da receita (quando ela ainda não tem o item escolhido) */
+function sugerirItem(nome) {
+  const n = nucleoNome(nome), t = tipoDaReceita(nome);
+  return ITENS_TABELA.find(i => (!t || t === i.cat.id) && nucleoNome(i.nome) === n) || null;
+}
+/* item da tabela de uma receita: o escolhido no formulário ou, se não houver, o sugerido pelo nome */
+const itemDaReceita = r => (r ? itemTabela(r.itemCardapio) || (r.itemCardapio ? null : sugerirItem(r.nome)) : null);
+function selItemCardapio(bind, val, attrs = '') {
+  return `<select class="input" data-bind="${bind}" ${attrs}><option value="">Não está na tabela de preços</option>${TABELA_PRECOS.map(c => `<optgroup label="${esc(c.nome)}">${ITENS_TABELA.filter(i => i.cat === c).map(i => `<option value="${esc(i.key)}" ${i.key === val ? 'selected' : ''}>${esc(rotuloItem(i))}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
+/* Valor pela tabela: peso × preço do kg (itens por kg) ou o preço do item (por unidade/cento) */
+function valorPelaTabela(key, peso, qtd = 1) {
+  const it = itemTabela(key); if (!it) return null;
+  const base = it.un === 'kg' ? num(peso) * it.preco : it.preco;
+  const total = base * (num(qtd) > 0 ? num(qtd) : 1);
+  return total > 0 ? { it, total: round2(total), conta: it.un === 'kg' ? `${fmtNum(num(peso))} kg × ${brl(it.preco)}/kg` : `${brl(it.preco)}/${it.un}` } : null;
+}
+/* receitas do Cardápio que correspondem a um item da tabela (escolha explícita vale mais que o nome) */
 function receitasDoItem(catId, item) {
   const alvo = nucleoNome(nomeItem(item));
-  return db.receitas.filter(r => { const t = tipoDaReceita(r.nome); return (!t || t === catId) && nucleoNome(r.nome) === alvo; });
+  return db.receitas.filter(r => {
+    if (r.itemCardapio) { const [c, , n] = r.itemCardapio.split('|'); return c === catId && n === nomeItem(item); }
+    const t = tipoDaReceita(r.nome); return (!t || t === catId) && nucleoNome(r.nome) === alvo;
+  });
 }
 /* itens da tabela que correspondem a uma receita (para a estrela na aba Cardápio) */
 function itensDaReceita(r) {
@@ -813,6 +840,8 @@ function recipeFormHtml() {
       </div>`).join('')}
     <div style="margin-top:14px"><button class="btn soft sm" data-action="part-add">${I.plus} Parte da receita</button></div>
     <div class="rend">Rendimento: ${inp('recipeForm.rendimento', f.rendimento, 'inputmode="decimal"')} kg</div>
+    <div class="mt" style="max-width:560px">${field('Tipo de item do cardápio (tabela de preços)', selItemCardapio('recipeForm.itemCardapio', f.itemCardapio, 'id="recipe-item"'))}</div>
+    <p class="note">Define o preço usado ao colocar esta receita em produção (ex.: Bolos · Premium · R$ 95,00/kg) e a estrela ★ nos Itens do Cardápio.</p>
     ${f.id ? '<p class="note">As alterações valem para as próximas produções e encomendas. O que já foi produzido mantém a receita usada na época.</p>' : ''}
     <div class="form-actions">
       <button class="btn primary" data-action="recipe-save">${f.id ? 'Salvar alterações' : 'Salvar receita'}</button>
@@ -868,6 +897,12 @@ function productPreview() {
     ${c.faltando ? `<div class="small warn">${c.faltando} ingrediente(s) sem preço no estoque.</div>` : ''}
     ${shortageBox(shortages(snap.itens, fator, L), 'para esta produção')}`;
 }
+function notaValorProduto(f) {
+  const c = valorPelaTabela(f.itemCardapio, f.peso);
+  if (!c) return f.itemCardapio ? 'Informe o peso para calcular o valor pela tabela.' : 'Escolha o tipo de item do cardápio para o valor ser calculado pela tabela de preços.';
+  const porFatia = f.porFatias && num(f.fatias) > 0 ? ` · ${brl(round2(c.total / num(f.fatias)))} por fatia (${fmtNum(num(f.fatias))} fatias)` : '';
+  return `Valor pela tabela: ${c.conta} = <b>${brl(c.total)}</b> por bolo${porFatia}.${f.valorManual ? ' Você alterou o valor manualmente.' : ''}`;
+}
 function productFormHtml() {
   const f = ui.productForm;
   return `
@@ -878,13 +913,15 @@ function productFormHtml() {
       ${field('Peso por bolo (kg)', inp('productForm.peso', f.peso, 'inputmode="decimal" placeholder="Ex.: 2"'))}
       ${field('Quantidade produzida (bolos)', inp('productForm.quantidade', f.quantidade, 'inputmode="decimal" placeholder="Ex.: 1"'))}
       ${field('Data da produção', inp('productForm.data', f.data, 'type="date"'))}
+      <div class="span-all">${field('Tipo de item do cardápio (tabela de preços)', selItemCardapio('productForm.itemCardapio', f.itemCardapio, 'data-rerender'))}</div>
     </div>
     <div style="margin:16px 0 12px">${chk('productForm.porFatias', f.porFatias, 'Vender por fatias', 'data-rerender')}</div>
     <div class="form-grid">
       ${f.porFatias
-        ? field('Fatias por bolo', inp('productForm.fatias', f.fatias, 'inputmode="numeric" placeholder="Ex.: 12"')) + field('Valor por fatia (R$)', inp('productForm.valorFatia', f.valorFatia, 'inputmode="decimal" placeholder="Ex.: 10,00"'))
-        : field('Valor total do bolo (R$)', inp('productForm.valor', f.valor, 'inputmode="decimal" placeholder="Ex.: 80,00"'))}
+        ? field('Fatias por bolo', inp('productForm.fatias', f.fatias, 'inputmode="numeric" placeholder="Ex.: 12"')) + field('Valor por fatia (R$)', inp('productForm.valorFatia', f.valorFatia, 'inputmode="decimal" placeholder="Ex.: 10,00" id="prod-valor-fatia"'))
+        : field('Valor total do bolo (R$)', inp('productForm.valor', f.valor, 'inputmode="decimal" placeholder="Ex.: 80,00" id="prod-valor"'))}
     </div>
+    <p class="note" id="prod-valor-nota">${notaValorProduto(f)}</p>
     <div class="preview" data-preview="product">${productPreview()}</div>
     <p class="note">Ao salvar, os ingredientes da receita são baixados do estoque na data da produção.</p>
     <div class="form-actions">
@@ -906,6 +943,7 @@ function viewProdutos(L) {
           <button class="icon-btn danger" data-action="product-del" data-id="${p.id}" title="Excluir">${I.trash}</button></div></div>
         <span class="pill">${p.porFatias ? `Por fatias · ${fmtNum(num(p.fatias))} por bolo` : 'Bolo inteiro'}</span>
         <div style="margin-top:10px">
+          ${(() => { const it = itemTabela(p.itemCardapio) || itemDaReceita(recipeById(p.receitaId)); return it ? `<div class="kv"><span>Item do cardápio</span><b>${esc(it.cat.nome)} · ${esc(it.cat.grupos.length > 1 ? it.grupo.nome : it.nome)}</b></div>` : ''; })()}
           <div class="kv"><span>Peso</span><b>${fmtNum(num(p.peso))} kg</b></div>
           <div class="kv"><span>Produzido em</span><b>${fmtDate(p.data)}</b></div>
           <div class="kv"><span>Produzidos</span><b>${fmtNum(i.total)} ${unidadeLabel(i.unidade, i.total)}</b></div>
@@ -952,7 +990,7 @@ function saleFormHtml(L) {
       ${field('Cliente', inp('saleForm.cliente', f.cliente, 'placeholder="Nome do cliente"'))}
       ${field('Peso por bolo (kg)', inp('saleForm.peso', f.peso, 'inputmode="decimal" placeholder="Ex.: 2"'))}
       ${field('Quantidade (bolos)', inp('saleForm.qtd', f.qtd, 'inputmode="decimal"'))}
-      ${field('Valor da venda (R$)', inp('saleForm.valor', f.valor, 'inputmode="decimal" placeholder="Ex.: 80,00"'))}
+      ${field('Valor da venda (R$)', inp('saleForm.valor', f.valor, 'inputmode="decimal" placeholder="Ex.: 80,00" id="sale-valor"'))}
       ${field('Data da entrega', inp('saleForm.dataEntrega', f.dataEntrega, 'type="date"'))}
       ${field('Valor de entrada (R$) · 50%', inp('saleForm.entrada', f.entrada, 'inputmode="decimal" id="sale-entrada" placeholder="Metade do valor"'))}
       ${field('Valor na retirada (R$) · 50%', inp('saleForm.retirada', f.retirada, 'inputmode="decimal" id="sale-retirada" placeholder="Metade do valor"'))}
@@ -1470,6 +1508,16 @@ function syncDerived(path) {
     if (path === 'saleForm.produtoId') { f.qtd = '1'; f.valorManual = false; }
     if (path === 'saleForm.pagamento' && !bandeirasDe(f.pagamento).includes(f.bandeira)) f.bandeira = '';
     if (path === 'saleForm.receitaId') { const r = recipeById(f.receitaId); if (r && !f.peso) f.peso = inputNum(r.rendimento); }
+    // encomenda: valor = peso × preço do kg do item do cardápio da receita (× quantidade), até ser digitado à mão
+    if (f.encomenda && !f.valorManual && ['saleForm.receitaId', 'saleForm.peso', 'saleForm.qtd', 'saleForm.encomenda'].includes(path)) {
+      const it = itemDaReceita(recipeById(f.receitaId));
+      const c = it && valorPelaTabela(it.key, f.peso, f.qtd);
+      if (c) {
+        f.valor = inputNum(c.total); setEl('sale-valor', f.valor);
+        f.entrada = inputNum(round2(c.total / 2)); f.retirada = inputNum(round2(c.total - round2(c.total / 2)));
+        setEl('sale-entrada', f.entrada); setEl('sale-retirada', f.retirada);
+      }
+    }
     if (!f.encomenda && !f.valorManual && (path === 'saleForm.produtoId' || path === 'saleForm.qtd')) {
       const p = productById(f.produtoId);
       if (p) {
@@ -1480,8 +1528,31 @@ function syncDerived(path) {
       }
     }
   }
-  if (ui.productForm && path === 'productForm.receitaId') {
-    const r = recipeById(ui.productForm.receitaId); if (r) ui.productForm.peso = inputNum(r.rendimento);
+  const rf = ui.recipeForm;
+  if (rf && path === 'recipeForm.itemCardapio') rf.itemManual = true;
+  if (rf && path === 'recipeForm.nome' && !rf.itemManual) {
+    const it = sugerirItem(rf.nome); rf.itemCardapio = it ? it.key : '';
+    const el = document.getElementById('recipe-item'); if (el) el.value = rf.itemCardapio;
+  }
+  const pf = ui.productForm;
+  if (pf && path.startsWith('productForm.')) {
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    if (path === 'productForm.valor' || path === 'productForm.valorFatia') pf.valorManual = true;
+    if (path === 'productForm.receitaId') {
+      const r = recipeById(pf.receitaId);
+      if (r) { pf.peso = inputNum(r.rendimento); const it = itemDaReceita(r); pf.itemCardapio = it ? it.key : ''; pf.valorManual = false; }
+    }
+    if (path === 'productForm.itemCardapio') pf.valorManual = false;
+    // valor = peso × preço do kg da tabela (ou preço do item), recalculado enquanto não for digitado à mão
+    if (!pf.valorManual && ['productForm.receitaId', 'productForm.itemCardapio', 'productForm.peso', 'productForm.fatias', 'productForm.porFatias'].includes(path)) {
+      const c = valorPelaTabela(pf.itemCardapio, pf.peso);
+      if (c) {
+        pf.valor = inputNum(c.total);
+        if (num(pf.fatias) > 0) pf.valorFatia = inputNum(round2(c.total / num(pf.fatias)));
+        setEl('prod-valor', pf.valor); setEl('prod-valor-fatia', pf.valorFatia);
+      }
+    }
+    const nota = document.getElementById('prod-valor-nota'); if (nota) nota.innerHTML = notaValorProduto(pf);
   }
   if (ui.compraForm && path === 'compraForm.ingrediente') {
     const ing = computeLedger().ings.get(ingKey(ui.compraForm.ingrediente));
@@ -1498,10 +1569,11 @@ const ACTIONS = {
   'cal-move': d => { const dt = new Date(ui.cal.y, ui.cal.m + Number(d.d), 1); ui.cal.y = dt.getFullYear(); ui.cal.m = dt.getMonth(); render(); },
 
   /* Cardápio */
-  'recipe-new': () => { ui.recipeForm = { nome: '', rendimento: '', partes: [{ nome: 'Massa', itens: [blankItem()] }] }; render(); },
+  'recipe-new': () => { ui.recipeForm = { nome: '', rendimento: '', itemCardapio: '', partes: [{ nome: 'Massa', itens: [blankItem()] }] }; render(); },
   'recipe-edit': d => {
     const r = recipeById(d.id);
-    ui.recipeForm = { id: r.id, nome: r.nome, rendimento: inputNum(r.rendimento), partes: r.partes.map(p => ({ nome: p.nome, itens: p.itens.map(it => ({ qtd: inputNum(it.qtd), medida: it.medida, ingrediente: it.ingrediente })) })) };
+    const it = itemDaReceita(r);
+    ui.recipeForm = { id: r.id, nome: r.nome, rendimento: inputNum(r.rendimento), itemCardapio: it ? it.key : '', itemManual: !!r.itemCardapio, partes: r.partes.map(p => ({ nome: p.nome, itens: p.itens.map(it => ({ qtd: inputNum(it.qtd), medida: it.medida, ingrediente: it.ingrediente })) })) };
     render();
   },
   'recipe-cancel': () => { ui.recipeForm = null; render(); },
@@ -1527,7 +1599,7 @@ const ACTIONS = {
     if (bad) return fail(`Informe a quantidade de "${bad.ingrediente}".`);
     const rend = num(f.rendimento);
     if (!(rend > 0)) return fail('Informe o rendimento em kg.');
-    const rec = { id: f.id || uid(), nome: f.nome.trim(), rendimento: rend, partes };
+    const rec = { id: f.id || uid(), nome: f.nome.trim(), rendimento: rend, partes, itemCardapio: f.itemCardapio || 'nenhum' }; // 'nenhum' = escolhido "não está na tabela"
     if (f.id) db.receitas = db.receitas.map(r => (r.id === f.id ? rec : r)); else db.receitas.push(rec);
     ui.recipeForm = null; commit(f.id ? 'Receita atualizada.' : 'Receita incluída.');
   },
@@ -1535,11 +1607,12 @@ const ACTIONS = {
   /* Produtos */
   'product-new': () => {
     if (!db.receitas.length) return fail('Inclua uma receita no Cardápio primeiro.');
-    ui.productForm = { receitaId: '', peso: '', quantidade: '1', data: hoje(), porFatias: false, fatias: '', valorFatia: '', valor: '' }; render();
+    ui.productForm = { receitaId: '', itemCardapio: '', peso: '', quantidade: '1', data: hoje(), porFatias: false, fatias: '', valorFatia: '', valor: '' }; render();
   },
   'product-edit': d => {
     const p = productById(d.id);
-    ui.productForm = { id: p.id, receitaId: p.receitaId, peso: inputNum(p.peso), quantidade: inputNum(p.quantidade), data: p.data, porFatias: !!p.porFatias, fatias: inputNum(p.fatias), valorFatia: inputNum(p.valorFatia), valor: inputNum(p.valor) };
+    const itp = itemTabela(p.itemCardapio) || itemDaReceita(recipeById(p.receitaId));
+    ui.productForm = { id: p.id, receitaId: p.receitaId, itemCardapio: itp ? itp.key : '', valorManual: true, peso: inputNum(p.peso), quantidade: inputNum(p.quantidade), data: p.data, porFatias: !!p.porFatias, fatias: inputNum(p.fatias), valorFatia: inputNum(p.valorFatia), valor: inputNum(p.valor) };
     render(); window.scrollTo({ top: 0, behavior: 'smooth' });
   },
   'product-cancel': () => { ui.productForm = null; render(); },
@@ -1557,7 +1630,7 @@ const ACTIONS = {
     if (!(peso > 0)) return fail('Informe o peso do bolo.');
     if (!(qtd > 0)) return fail('Informe a quantidade produzida.');
     if (!f.data) return fail('Informe a data da produção.');
-    const p = { id: f.id || uid(), seq: old ? old.seq || 0 : Date.now(), receitaId: f.receitaId, peso, quantidade: qtd, data: f.data, porFatias: !!f.porFatias };
+    const p = { id: f.id || uid(), seq: old ? old.seq || 0 : Date.now(), receitaId: f.receitaId, itemCardapio: f.itemCardapio || '', peso, quantidade: qtd, data: f.data, porFatias: !!f.porFatias };
     if (p.porFatias) {
       p.fatias = num(f.fatias); p.valorFatia = num(f.valorFatia);
       if (!(p.fatias > 0)) return fail('Informe quantas fatias tem cada bolo.');

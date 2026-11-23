@@ -280,6 +280,19 @@ tr.zero td { background: var(--danger-bg); }
 .mes-filter { min-width: 190px; }
 
 .modal-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+/* Itens do Cardápio (tabela de preços) */
+.cardapio-precos { margin-top: 32px; }
+.cardapio-precos .subtabs { margin-bottom: 10px; }
+.subtabs-sm { display: flex; flex-wrap: wrap; background: transparent; padding: 0; gap: 6px; }
+.subtabs-sm button { border: 1px solid var(--border); background: var(--surface); padding: 4px 12px; font-size: 13px; }
+.subtabs-sm button.active { background: var(--primary); color: var(--on-primary); border-color: var(--primary); box-shadow: none; }
+.menu-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+.menu-itens { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.menu-itens li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--border); font-variant-numeric: tabular-nums; }
+.menu-itens li > span::before { content: "♥"; color: var(--primary); margin-right: 8px; font-size: 12px; }
+.menu-itens li b { white-space: nowrap; font-weight: 600; color: var(--text); }
+@media (max-width: 600px) { .menu-itens { grid-template-columns: minmax(0, 1fr); } }
 .filtro-chip { display: inline-flex; gap: 10px; align-items: center; background: var(--surface-2); border-radius: 999px; padding: 6px 14px; font-size: 13px; margin-bottom: 12px; }
 .nf-btn { cursor: pointer; }
 .nf-table td { vertical-align: top; }

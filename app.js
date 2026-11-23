@@ -620,10 +620,53 @@ function shortageBox(list, quando) {
 }
 
 /* =================== INÍCIO =================== */
+/* Itens do cardápio — Tabela de preços 2026 (páginas 2, 5, 6 e 7 do PDF).
+   Grupo com `preco` vale para todos os itens; item com `preco` próprio usa o dele. */
+const TABELA_PRECOS = [
+  { id: 'bolos', nome: 'Bolos', nota: 'Valor por kg', grupos: [
+    { nome: 'Tradicionais', preco: 85, un: 'kg', itens: ['Mousse de chocolate', 'Mousse de maracujá', 'Abacaxi', 'Sensação', 'Pêssego', 'Danette', 'Mousse de Ninho'] },
+    { nome: 'Premium', preco: 95, un: 'kg', itens: ['Brigadeiro', 'Doce de Leite', 'Prestígio', 'Dois amores', 'Brigadeiro de Ninho', 'Salada de Frutas', 'Brigadeiro de Maracujá', 'Bicho de pé', 'Alpino'] },
+  ] },
+  { id: 'docinhos', nome: 'Docinhos', nota: 'Preço por cento', grupos: [
+    { nome: 'Cento R$ 90,00', preco: 90, un: 'cento', itens: ['Tradicional (Chocolate)', 'Beijinho', 'Bicho de pé'] },
+    { nome: 'Cento R$ 100,00', preco: 100, un: 'cento', itens: ['Ninho com Nutella', 'Churros', 'Olho de Sogra', 'Oreo', 'Ferrero'] },
+  ] },
+  { id: 'cupcakes', nome: 'Cupcakes', nota: 'Valores por unidade · pedido mínimo de 20 unidades', grupos: [
+    { nome: 'Cupcakes', un: 'un.', itens: [
+      { nome: 'Chantilly com recheio', preco: 6 }, { nome: 'Chantilly sem recheio', preco: 5 },
+      { nome: 'Pasta americana com recheio', preco: 7 }, { nome: 'Pasta americana sem recheio', preco: 6 },
+    ] },
+  ] },
+  { id: 'doces', nome: 'Doces', nota: 'Valores por unidade', grupos: [
+    { nome: 'Personalizados', un: 'un.', aPartir: true, itens: [
+      { nome: 'Pirulito', preco: 8.5 }, { nome: 'Mini pão de mel', preco: 4 }, { nome: 'Pão de mel no palito', preco: 10 },
+      { nome: 'Pop cake', preco: 6 }, { nome: 'Mini trufas', preco: 4.5 }, { nome: 'Maçã do amor', preco: 4.5 },
+      { nome: 'Maçã de chocolate', preco: 8 }, { nome: 'Porta retrato chocolate', preco: 9 }, { nome: 'Cone recheado', preco: 10.5 },
+      { nome: 'Mini Cake Donuts', preco: 2.5 }, { nome: 'Mini Cake Donuts recheado', preco: 4 },
+    ] },
+    { nome: 'Doces finos', un: 'un.', itens: [{ nome: 'Copinho recheado', preco: 5 }, { nome: 'Concha de chocolate', preco: 6 }] },
+  ] },
+];
+function tabelaPrecosHtml() {
+  const cat = TABELA_PRECOS.find(c => c.id === ui.menuTab) || TABELA_PRECOS[0];
+  const grupo = cat.grupos[Math.min(ui.menuSub || 0, cat.grupos.length - 1)];
+  const precoTxt = (p, g) => `${g.aPartir ? '<span class="small muted">a partir de</span> ' : ''}${brl(p)}<span class="small muted">/${g.un}</span>`;
+  return `<section class="card cardapio-precos">
+    <h2 class="card-title">${I.chef} Itens do Cardápio</h2>
+    <div class="subtabs" role="tablist">${TABELA_PRECOS.map(c => `<button role="tab" class="${c === cat ? 'active' : ''}" data-action="menu-tab" data-k="${c.id}">${c.nome}</button>`).join('')}</div>
+    ${cat.grupos.length > 1 ? `<div class="subtabs subtabs-sm" role="tablist">${cat.grupos.map((g, i) => `<button role="tab" class="${g === grupo ? 'active' : ''}" data-action="menu-sub" data-i="${i}">${esc(g.nome)}</button>`).join('')}</div>` : ''}
+    <div class="menu-head"><span class="muted small">${esc(cat.nota)}</span>${grupo.preco ? `<span class="pill gold">${esc(grupo.nome.startsWith('Cento') ? 'Cada sabor' : grupo.nome)} · ${brl(grupo.preco)} ${grupo.un === 'kg' ? 'o kg' : 'o cento'}</span>` : ''}</div>
+    <ul class="menu-itens">${grupo.itens.map(it => {
+      const nome = typeof it === 'string' ? it : it.nome;
+      const preco = typeof it === 'string' ? grupo.preco : it.preco;
+      return `<li><span>${esc(nome)}</span><b>${precoTxt(preco, grupo)}</b></li>`;
+    }).join('')}</ul>
+  </section>`;
+}
 function viewInicio(L) {
   const disp = db.produtos.map(p => ({ p, i: prodInfo(p, L) })).filter(x => x.i.disp > EPS);
   const sem = [...L.ings.values()].filter(i => i.saldo <= EPS).sort((a, b) => a.nome.localeCompare(b.nome));
-  return `
+  return tabelaPrecosHtml() + `
   <div class="grid grid-home">
     <section class="card">
       <h2 class="card-title">${I.bag} Produtos à venda</h2>
@@ -1639,6 +1682,8 @@ const ACTIONS = {
     if (old) db.compras = db.compras.map(c => (c.id === old.id ? compra : c)); else db.compras.push(compra);
     ui.compraForm = null; commit(old ? 'Compra atualizada. Custo médio recalculado.' : 'Compra incluída. Custo médio recalculado.');
   },
+  'menu-tab': d => { ui.menuTab = d.k; ui.menuSub = 0; render(); },
+  'menu-sub': d => { ui.menuSub = Number(d.i); render(); },
   'nf-cancel': () => { ui.nf = null; render(); },
   'nf-linha': () => {
     ui.nf.itens.push({ incluir: true, descricao: '(incluído à mão)', ingrediente: '', quantidade: '', medida: '', valor: '', confira: false });

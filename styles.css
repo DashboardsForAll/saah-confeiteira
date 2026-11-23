@@ -293,6 +293,10 @@ tr.zero td { background: var(--danger-bg); }
 .menu-itens li > span::before { content: "♥"; color: var(--primary); margin-right: 8px; font-size: 12px; }
 .menu-itens li b { white-space: nowrap; font-weight: 600; color: var(--text); }
 @media (max-width: 600px) { .menu-itens { grid-template-columns: minmax(0, 1fr); } }
+.estrela { color: oklch(62% .2 355); font-size: 1.05em; cursor: help; }
+.menu-itens li.tem-receita > span { font-weight: 600; }
+.estrela-n { font-size: 11px; color: oklch(62% .2 355); font-weight: 700; }
+.subtabs-sm button.active .estrela-n { color: var(--on-primary); }
 .filtro-chip { display: inline-flex; gap: 10px; align-items: center; background: var(--surface-2); border-radius: 999px; padding: 6px 14px; font-size: 13px; margin-bottom: 12px; }
 .nf-btn { cursor: pointer; }
 .nf-table td { vertical-align: top; }

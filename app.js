@@ -855,10 +855,10 @@ function recipeCard(r) {
   return `
   <section class="card">
     <div class="recipe-head">
-      <h2 class="card-title">${I.chef} ${esc(r.nome)}${(() => { const itens = itensDaReceita(r); return itens.length ? ' ' + estrela('Na tabela de preços: ' + itens.join('; ')) : ''; })()}</h2>
+      <h2 class="card-title">${I.chef} <span class="card-title-txt">${esc(r.nome)}${(() => { const itens = itensDaReceita(r); return itens.length ? ' ' + estrela('Na tabela de preços: ' + itens.join('; ')) : ''; })()}</span></h2>
       <div class="recipe-actions">
-        <button class="btn ghost sm" data-action="recipe-edit" data-id="${r.id}">${I.edit} Editar</button>
-        <button class="btn ghost sm" data-action="recipe-toggle" data-id="${r.id}">${col ? I.down + ' Expandir' : I.up + ' Recolher'}</button>
+        <button class="btn ghost sm" data-action="recipe-edit" data-id="${r.id}" title="Editar receita">${I.edit}<span class="btn-label">Editar</span></button>
+        <button class="btn ghost sm" data-action="recipe-toggle" data-id="${r.id}" title="${col ? 'Expandir' : 'Recolher'}">${col ? I.down : I.up}<span class="btn-label">${col ? 'Expandir' : 'Recolher'}</span></button>
         <button class="icon-btn danger" data-action="recipe-del" data-id="${r.id}" title="Excluir receita">${I.trash}</button>
       </div>
     </div>

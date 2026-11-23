@@ -176,9 +176,14 @@ select.input { background: var(--surface-2); }
 .rend .input { width: 100px; }
 
 /* Recipe card */
-.recipe-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.recipe-head .card-title { margin: 0; }
-.recipe-actions { display: flex; align-items: center; gap: 2px; }
+/* nome à esquerda, botões sempre na mesma linha à direita (o nome quebra linha se precisar) */
+.recipe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: nowrap; min-height: 34px; }
+.recipe-head .card-title { margin: 0; flex: 1; min-width: 0; padding-top: 4px; }
+.recipe-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.recipe-actions .btn-label { margin-left: 2px; }
+.grid > .card { container-type: inline-size; }
+.card-title-txt { min-width: 0; }
+@container (max-width: 600px) { .recipe-actions .btn-label { display: none; } .recipe-actions .btn.sm { padding: 6px 8px; } }
 .part-title { margin: 18px 0 6px; font-weight: 600; font-size: 16px; }
 .yield { margin-top: 16px; background: var(--surface-2); border-radius: 14px; padding: 12px 16px; font-weight: 600; }
 .yield b { color: var(--accent); }
